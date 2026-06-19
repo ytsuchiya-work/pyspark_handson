@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PySpark on Databricks ハンズオン資料</title>
+<style>
+  :root {
+    --db-orange: #FF3621;
+    --db-navy: #1B3139;
+    --db-gray: #F6F7F9;
+    --db-border: #E2E6E9;
+    --db-text: #1B3139;
+    --db-code-bg: #1B3139;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Helvetica Neue", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+    color: var(--db-text); margin: 0; line-height: 1.75; background: #fff;
+  }
+  header {
+    background: linear-gradient(120deg, var(--db-navy), #2d4f5a);
+    color: #fff; padding: 56px 8% 48px;
+  }
+  header .tag { color: var(--db-orange); font-weight: 700; letter-spacing: .12em; font-size: .82rem; }
+  header h1 { font-size: 2.4rem; margin: 8px 0 12px; }
+  header p { font-size: 1.05rem; opacity: .9; max-width: 760px; margin: 0; }
+  main { max-width: 980px; margin: 0 auto; padding: 0 24px 80px; }
+  section { padding: 40px 0 8px; border-bottom: 1px solid var(--db-border); }
+  h2 {
+    font-size: 1.55rem; color: var(--db-navy); margin: 0 0 18px;
+    padding-left: 14px; border-left: 5px solid var(--db-orange);
+  }
+  h3 { font-size: 1.15rem; color: var(--db-navy); margin: 28px 0 10px; }
+  p, li { font-size: 1rem; }
+  ul, ol { padding-left: 1.4em; }
+  code {
+    background: var(--db-gray); padding: 2px 6px; border-radius: 4px;
+    font-family: "SFMono-Regular", Consolas, monospace; font-size: .9em; color: #b5341f;
+  }
+  pre {
+    background: var(--db-code-bg); color: #eaf1f3; padding: 18px 20px; border-radius: 10px;
+    overflow-x: auto; font-size: .88rem; line-height: 1.6;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap: 16px; margin: 16px 0; }
+  .card { background: var(--db-gray); border: 1px solid var(--db-border); border-radius: 10px; padding: 18px 20px; }
+  .card h4 { margin: 0 0 6px; color: var(--db-orange); font-size: 1rem; }
+  .card p { margin: 0; font-size: .92rem; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: .94rem; }
+  th, td { border: 1px solid var(--db-border); padding: 10px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--db-navy); color: #fff; }
+  tr:nth-child(even) td { background: var(--db-gray); }
+  .note { background: #FFF6F4; border-left: 4px solid var(--db-orange); padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .note strong { color: var(--db-orange); }
+  .steps { counter-reset: step; list-style: none; padding: 0; }
+  .steps > li { position: relative; padding: 14px 0 14px 56px; border-bottom: 1px dashed var(--db-border); }
+  .steps > li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 0; top: 12px; width: 36px; height: 36px;
+    background: var(--db-orange); color: #fff; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-weight: 700;
+  }
+  a { color: var(--db-orange); }
+  footer { text-align: center; color: #7b8a90; font-size: .85rem; padding: 28px; }
+  .pill { display:inline-block; background:var(--db-orange); color:#fff; border-radius:999px; padding:2px 12px; font-size:.78rem; margin-right:6px;}
+</style>
+</head>
+<body>
+<header>
+  <div class="tag">DATABRICKS · PYSPARK HANDS-ON</div>
+  <h1>PySpark on Databricks ハンズオン資料</h1>
+  <p>PySpark の概要、Databricks 上での実装方法、つまずきやすい注意点、そして合成データ生成から実行までを体験するハンズオン手順を 1 枚にまとめた資料です。</p>
+</header>
+
+<main>
+
+<!-- ================= 概要 ================= -->
+<section>
+  <h2>1. PySpark の概要</h2>
+  <p><strong>PySpark</strong> は、Python から <strong>Apache Spark</strong> を操作するための API です。学習・実装・保守がしやすい Python と、大規模分散処理エンジンである Spark の機能を組み合わせ、ビッグデータ処理と機械学習を実現します。Databricks は Apache Spark の上に構築されたプラットフォームであり、PySpark はその中核となるデータ処理インターフェースです。</p>
+
+  <div class="grid">
+    <div class="card"><h4>習得が容易</h4><p>柔軟で読みやすい Python を活用し、最小限の記述でデータ処理を表現できます。</p></div>
+    <div class="card"><h4>豊富なデータ操作</h4><p>列の選択・フィルター・結合・集計など、表形式データ向けの関数が充実しています。</p></div>
+    <div class="card"><h4>スケーラビリティ</h4><p>クラスター上で自動的に分散処理され、GB〜PB 級のデータを扱えます。</p></div>
+    <div class="card"><h4>SQL との相互運用</h4><p>DataFrame と Spark SQL を相互に行き来でき、チームの得意な言語で実装できます。</p></div>
+  </div>
+
+  <h3>中核概念：DataFrame と遅延評価</h3>
+  <ul>
+    <li><strong>DataFrame</strong>：名前付き列を持つ分散表形式データ。PySpark の基本データ構造です。</li>
+    <li><strong>変換（Transformation）</strong>：<code>select</code> / <code>filter</code> / <code>join</code> / <code>groupBy</code> など。新しい DataFrame を返すだけで、すぐには計算されません。</li>
+    <li><strong>アクション（Action）</strong>：<code>display</code> / <code>count</code> / <code>collect</code> / <code>write</code> など。ここで初めて計算が走ります（<span class="pill">遅延評価</span>）。</li>
+  </ul>
+</section>
+
+<!-- ================= 実装 ================= -->
+<section>
+  <h2>2. Databricks 上での PySpark 実装</h2>
+  <p>Databricks ノートブックでは <code>spark</code>（SparkSession）と <code>dbutils</code> が初期化済みで、すぐにコードを書き始められます。代表的な操作を以下に示します。</p>
+
+  <h3>2.1 DataFrame の作成</h3>
+<pre><code># 値を直接指定して作成
+df = spark.createDataFrame(
+    data=[("Mikhail", 15), ("Zaky", 13), ("Zoya", 8)],
+    schema=["name", "age"])
+
+# Unity Catalog テーブルから作成
+df_customer = spark.table("samples.tpch.customer")
+
+# CSV ファイルから作成
+df_csv = (spark.read.format("csv")
+    .option("header", True)
+    .option("inferSchema", True)
+    .load(volume_file_path))</code></pre>
+
+  <h3>2.2 列・行の操作</h3>
+<pre><code>from pyspark.sql.functions import col
+
+# 列の選択 / 追加 / 型変換 / リネーム
+df.select(col("c_custkey"), col("c_acctbal"))
+df.withColumn("balance_flag", col("c_acctbal") > 1000)
+df.withColumn("c_custkey", col("c_custkey").cast("string"))
+df.withColumnRenamed("old_name", "new_name")
+
+# フィルタ（複数条件は & / | を括弧で）
+df.filter((col("c_nationkey") == 20) & (col("c_acctbal") > 1000))
+
+# 重複削除 / NULL 処理 / ソート
+df.distinct()
+df.na.drop(); df.na.fill("0", subset=["c_acctbal"])
+df.sort(col("c_acctbal").desc()).limit(10)</code></pre>
+
+  <h3>2.3 結合・集計・メソッドチェーン</h3>
+<pre><code>from pyspark.sql.functions import avg, count
+
+# 結合（inner / left / outer）
+df_joined = df_order.join(df_customer,
+    on=df_order["o_custkey"] == df_customer["c_custkey"], how="inner")
+
+# 集計
+df_customer.groupBy("c_mktsegment").agg(avg("c_acctbal"))
+
+# メソッドチェーンで読みやすく
+df_chained = (df_order
+    .filter(col("o_orderstatus") == "F")
+    .groupBy(col("o_orderpriority"))
+    .agg(count(col("o_orderkey")).alias("n_orders"))
+    .sort(col("n_orders").desc()))</code></pre>
+
+  <h3>2.4 SQL 連携・保存・データソース</h3>
+<pre><code># DataFrame ⇔ SQL
+df_joined.createOrReplaceTempView("joined_view")
+spark.sql("SELECT c_mktsegment, COUNT(*) FROM joined_view GROUP BY c_mktsegment")
+
+# テーブルとして保存（Delta）
+df_joined.write.mode("overwrite").saveAsTable(f"{catalog}.{schema}.result")
+
+# 各種フォーマットで書き込み / 読み込み（Volume 上）
+df.write.format("parquet").mode("overwrite").save(f"{volume}/out_parquet")
+spark.read.format("json").load(f"{volume}/out_json")</code></pre>
+
+  <div class="note"><strong>カスタムデータソース：</strong> Databricks Runtime 15.4 LTS 以降（またはサーバレス環境バージョン 2）では、Python DataSource API で独自データソースの読み書きを実装できます（<code>DataSource</code> / <code>DataSourceReader</code> / <code>DataSourceStreamReader</code> など）。</div>
+</section>
+
+<!-- ================= 注意点 ================= -->
+<section>
+  <h2>3. 注意点・ベストプラクティス</h2>
+  <table>
+    <tr><th>カテゴリ</th><th>ポイント</th></tr>
+    <tr><td>遅延評価</td><td>変換は積み重ねても実行されない。<code>count</code> や <code>display</code> 等のアクションで初めて計算される。デバッグ時はこの違いを意識する。</td></tr>
+    <tr><td>大量データの収集</td><td><code>collect()</code> や <code>toPandas()</code> は全データをドライバーに集める。大規模データで実行するとメモリ不足になるため、件数を絞ってから使う。</td></tr>
+    <tr><td>行ごとのループ回避</td><td>Python の <code>for</code> ループで 1 行ずつ処理せず、<code>pyspark.sql.functions</code> の列式で一括処理する（分散処理に乗せる）。</td></tr>
+    <tr><td>関数のインポート</td><td>Python 組み込みの <code>sum</code> / <code>max</code> と衝突するため、<code>from pyspark.sql.functions import sum as _sum</code> のように別名にするか <code>F.</code> 接頭辞で使う。</td></tr>
+    <tr><td>UDF よりビルトイン</td><td>Python UDF はシリアライズのオーバーヘッドが大きい。まず組み込み関数や Spark SQL 関数で表現できないか検討する。</td></tr>
+    <tr><td>結合キーの曖昧さ</td><td>両 DataFrame に同名列があると結合後に曖昧参照になる。事前に <code>withColumnRenamed</code> するか結合条件を明示する。</td></tr>
+    <tr><td>書き込みモード</td><td><code>mode("overwrite")</code> / <code>"append"</code> / <code>"error"</code>(既定) を意図して指定する。本番テーブルへの上書きは特に注意。</td></tr>
+    <tr><td>Unity Catalog</td><td>テーブルは <code>catalog.schema.table</code> の 3 階層で参照する。ファイル入出力は DBFS ルートではなく <code>/Volumes/...</code>（ボリューム）を使うのが推奨。</td></tr>
+    <tr><td>ランタイム要件</td><td>カスタムデータソースや一部関数は Databricks Runtime のバージョン依存。<code>[UNSUPPORTED_FEATURE]</code> が出たら 15.4 LTS 以降を選ぶ。</td></tr>
+  </table>
+</section>
+
+<!-- ================= ハンズオン手順 ================= -->
+<section>
+  <h2>4. ハンズオン手順</h2>
+  <p>付属のノートブック <code>notebooks/01_pyspark_handson.py</code> を Databricks 上で実行します。合成データの生成から各種 PySpark 操作までを順番に体験できます。</p>
+  <ol class="steps">
+    <li><strong>Git フォルダの準備</strong>：Databricks のワークスペースで <code>pyspark_handson</code> リポジトリを Git フォルダとして追加（または既存フォルダを最新へ <em>Pull</em>）します。</li>
+    <li><strong>ノートブックを開く</strong>：<code>notebooks/01_pyspark_handson.py</code> を開きます。</li>
+    <li><strong>コンピュートをアタッチ</strong>：Serverless もしくは Databricks Runtime 15.4 LTS 以降の汎用クラスターに接続します。</li>
+    <li><strong>パラメータ設定</strong>：上部のウィジェットで出力先カタログ・スキーマ、生成件数を必要に応じて変更します。</li>
+    <li><strong>セットアップ実行</strong>：スキーマとボリュームが作成されます（セクション 0〜1）。</li>
+    <li><strong>合成データ生成</strong>：顧客・注文データを生成し、Delta テーブルへ保存します（セクション 2〜5）。</li>
+    <li><strong>DataFrame 操作</strong>：列・行操作、結合、集計、メソッドチェーンを実行します（セクション 6〜10）。</li>
+    <li><strong>SQL 連携・データソース</strong>：一時ビュー経由の SQL 実行、CSV/JSON/Parquet の読み書きを確認します（セクション 11〜12）。</li>
+    <li><strong>後片付け（任意）</strong>：最終セルのコメントを外すと、作成したスキーマを削除できます。</li>
+  </ol>
+
+  <div class="note"><strong>生成されるデータ：</strong> 既定で顧客 10,000 件・注文 50,000 件。<code>num_customers</code> / <code>num_orders</code> ウィジェットで増減できます。</div>
+</section>
+
+<section>
+  <h2>5. 参考リンク</h2>
+  <ul>
+    <li><a href="https://docs.databricks.com/aws/ja/pyspark/">Databricks の PySpark（概要）</a></li>
+    <li><a href="https://docs.databricks.com/aws/ja/pyspark/basics">PySpark の基本</a></li>
+    <li><a href="https://docs.databricks.com/aws/ja/pyspark/datasources">PySpark のカスタムデータソース</a></li>
+    <li><a href="https://docs.databricks.com/aws/ja/getting-started/dataframes">DataFrame チュートリアル</a></li>
+    <li><a href="https://github.com/ytsuchiya-work/pyspark_handson">本ハンズオンのリポジトリ</a></li>
+  </ul>
+</section>
+
+</main>
+<footer>PySpark on Databricks Hands-on · 生成資料</footer>
+</body>
+</html>
