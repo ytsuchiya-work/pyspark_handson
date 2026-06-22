@@ -274,7 +274,41 @@ display(df_customer.sort(col("c_acctbal").desc()).limit(10))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 1.9 データソース：各種フォーマットの書き込み・読み込み
+# MAGIC ## 1.9 データ型ごとの操作イディオム
+# MAGIC 実データには条件分岐・NULL・日付・複雑な型がつきもの。代表的なイディオムを押さえます
+# MAGIC （『The Data Engineer's Guide to Apache Spark and Delta Lake』Chapter 3 より）。
+
+# COMMAND ----------
+
+from pyspark.sql.functions import when, coalesce, datediff, current_date, struct, explode, collect_list
+
+# 条件分岐：when / otherwise（SQL の CASE 相当）
+display(df_customer.withColumn("tier",
+        when(col("c_acctbal") > 5000, "gold")
+        .when(col("c_acctbal") > 0, "silver")
+        .otherwise("negative"))
+        .select("c_custkey", "c_acctbal", "tier").limit(5))
+
+# NULL 処理：coalesce で代替値を与える
+df_maybe_null = df_customer.withColumn(
+    "maybe_null", when(col("c_custkey") % 2 == 0, None).otherwise(col("c_name")))
+display(df_maybe_null.withColumn("filled", coalesce(col("maybe_null"), F.lit("(unknown)")))
+        .select("c_custkey", "maybe_null", "filled").limit(6))
+
+# 日付：注文日からの経過日数
+display(df_order.withColumn("days_since", datediff(current_date(), col("o_orderdate")))
+        .select("o_orderkey", "o_orderdate", "days_since").limit(5))
+
+# 複雑な型：struct でネスト、collect_list で配列化 → explode で展開
+df_struct = df_customer.withColumn("profile", struct("c_mktsegment", "c_nation"))
+display(df_struct.select("c_custkey", "profile").limit(5))
+df_arr = df_customer.groupBy("c_mktsegment").agg(collect_list("c_custkey").alias("custkeys"))
+display(df_arr.withColumn("one_key", explode("custkeys")).limit(5))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 1.10 データソース：各種フォーマットの書き込み・読み込み
 # MAGIC ボリューム上に CSV / JSON / Parquet で書き出し、読み戻します。分析用途では **Parquet（列指向・高速）** が定番です。
 
 # COMMAND ----------
@@ -474,7 +508,67 @@ display(spark.sql(dynamic_sql))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2.7 パフォーマンスチューニングの基本
+# MAGIC ## 2.7 Delta Lake：信頼性の高いテーブル運用
+# MAGIC Databricks のテーブルは既定で **Delta Lake** 形式です。Delta Lake はデータレイク上のストレージ層で、
+# MAGIC **ACID トランザクション**・大規模メタデータ・バッチ/ストリーミング統合・**タイムトラベル**を提供します。
+# MAGIC 変更履歴は `_delta_log`（トランザクションログ）に記録され、MVCC により安全に更新できます
+# MAGIC （『The Data Engineer's Guide to Apache Spark and Delta Lake』Chapter 4 より）。
+# MAGIC
+# MAGIC - **スキーマ強制**：列の型不一致を書き込み時に拒否（`mergeSchema` でスキーマ進化も可）
+# MAGIC - **DELETE / UPDATE / MERGE**：従来は全書き換えが必要だった操作を 1 文で実行
+# MAGIC - **タイムトラベル**：`VERSION AS OF` / `TIMESTAMP AS OF` で過去の状態を参照
+# MAGIC - **OPTIMIZE / Z-ORDER / VACUUM**：小ファイル圧縮・データスキッピング・不要ファイル削除
+
+# COMMAND ----------
+
+from delta.tables import DeltaTable
+
+# デモ用 Delta テーブルを作成（= バージョン 0）
+demo_tbl = f"{catalog_name}.{schema_name}.delta_demo"
+(df_customer.select("c_custkey", "c_name", "c_mktsegment", "c_acctbal")
+    .write.mode("overwrite").saveAsTable(demo_tbl))
+dt = DeltaTable.forName(spark, demo_tbl)
+print("作成直後の件数:", spark.table(demo_tbl).count())
+
+# DELETE：マイナス残高の行を削除（全書き換え不要・ACID）
+dt.delete("c_acctbal < 0")
+print("DELETE 後の件数:", spark.table(demo_tbl).count())
+
+# UPDATE：BUILDING セグメントをリネーム
+dt.update(condition="c_mktsegment = 'BUILDING'", set={"c_mktsegment": "'CONSTRUCTION'"})
+print("UPDATE 後の CONSTRUCTION 件数:", spark.table(demo_tbl).filter("c_mktsegment = 'CONSTRUCTION'").count())
+
+# COMMAND ----------
+
+# MERGE（upsert）：更新・挿入・重複排除を 1 文で
+updates = spark.createDataFrame(
+    [(1, "Customer#1", "VIP", 99999.0),            # 既存 → 更新
+     (10_000_001, "NewCustomer", "MACHINERY", 500.0)],  # 新規 → 挿入
+    ["c_custkey", "c_name", "c_mktsegment", "c_acctbal"])
+(dt.alias("t")
+    .merge(updates.alias("u"), "t.c_custkey = u.c_custkey")
+    .whenMatchedUpdateAll()
+    .whenNotMatchedInsertAll()
+    .execute())
+print("MERGE 後の件数:", spark.table(demo_tbl).count())
+display(spark.table(demo_tbl).filter("c_custkey IN (1, 10000001)"))
+
+# COMMAND ----------
+
+# 履歴の確認とタイムトラベル
+display(spark.sql(f"DESCRIBE HISTORY {demo_tbl}").select("version", "timestamp", "operation"))
+
+v0 = spark.sql(f"SELECT COUNT(*) AS c FROM {demo_tbl} VERSION AS OF 0").collect()[0]["c"]
+now = spark.table(demo_tbl).count()
+print(f"バージョン0（作成時）の件数: {v0} / 現在の件数: {now}")
+
+# OPTIMIZE：小ファイルを圧縮（Z-ORDER でデータスキッピングも可能）
+display(spark.sql(f"OPTIMIZE {demo_tbl}"))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 2.8 パフォーマンスチューニングの基本
 # MAGIC - **DataFrame / 組み込み関数を優先**（JVM 実行で高速。RDD / Python UDF は Python プロセスで遅い）
 # MAGIC - **処理するデータ量を減らす**（早めに `filter` / `select`）
 # MAGIC - **小さいテーブルは broadcast join** でシャッフルを避ける
@@ -503,7 +597,7 @@ display(seg_summary)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2.8 pandas との相互変換と Apache Arrow
+# MAGIC ## 2.9 pandas との相互変換と Apache Arrow
 # MAGIC 集計後の小さな結果は pandas に変換して可視化・後処理できます。**Arrow** を有効にすると変換が高速化されます。
 # MAGIC ※ `toPandas()` は全件をドライバーに集めるため、**小さく集計してから**変換します。
 
@@ -530,7 +624,7 @@ display(df_back)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2.9 UDF とそのコスト
+# MAGIC ## 2.10 UDF とそのコスト
 # MAGIC 組み込み関数で書けない処理は **UDF** で実装できますが、Python UDF は Python プロセスで実行され
 # MAGIC シリアライズのオーバーヘッドがあります。**まず組み込み関数・SQL 式で書けないか**を検討しましょう。
 
@@ -567,13 +661,14 @@ display(df_customer.withColumn("rank",
 # MAGIC - Spark / PySpark の概念とアーキテクチャ（Py4J・JVM 実行・遅延評価）
 # MAGIC - SparkSession、変換とアクションの違い、`explain` による実行計画の確認
 # MAGIC - DataFrame の 4 つの作成方法、スキーマ（メタデータ）の確認
-# MAGIC - 合成データ生成 → Delta テーブル保存・読み込み → 列・行操作 → データソース読み書き
+# MAGIC - 合成データ生成 → Delta 保存・読み込み → 列・行操作 → データ型操作 → データソース読み書き
 # MAGIC
 # MAGIC **Part 2（中級）**
 # MAGIC - 結合・集計・メソッドチェーン、SQL 連携の 4 スタイル
 # MAGIC - `collect` の作法、DataFrame in/out 設計と単体テスト
 # MAGIC - 変数・クラス・Config 活用、スキーマに基づく動的処理・動的 SQL 生成
-# MAGIC - パフォーマンス（broadcast join / cache / explain / Parquet）、pandas + Arrow、UDF とコスト
+# MAGIC - **Delta Lake**（ACID・DELETE/UPDATE/MERGE・タイムトラベル・OPTIMIZE）
+# MAGIC - パフォーマンス（broadcast join / explain / Parquet）、pandas + Arrow、UDF とコスト
 # MAGIC
 # MAGIC ### 後片付け（任意）
 # MAGIC 生成物を削除したい場合は次のセルのコメントを外して実行してください。

@@ -6,8 +6,9 @@ PySpark を Databricks 上で試すハンズオンです。合成データの生
 
 | パス | 内容 |
 |------|------|
-| `notebooks/01_pyspark_handson.py` | ハンズオン用 Databricks ノートブック（データ生成 → PySpark 実行） |
+| `notebooks/01_pyspark_handson.py` | ハンズオン用 Databricks ノートブック（データ生成 → PySpark 実行。初級→中級） |
 | `docs/pyspark_handson.html` | PySpark の概要・実装・注意点・手順をまとめた HTML 資料 |
+| `docs/pyspark_handson.pdf` | 上記 HTML の PDF 版 |
 
 ## 実行手順
 
@@ -24,11 +25,18 @@ PySpark を Databricks 上で試すハンズオンです。合成データの生
 - 列操作（`select` / `withColumn` / `cast` / `withColumnRenamed`）
 - 行操作（`filter` / `distinct` / `sort` / `limit`）
 - 結合（`join`）・集計（`groupBy` + `agg`）・メソッドチェーン
-- SQL 連携（`createOrReplaceTempView` + `spark.sql`）
+- SQL 連携（`createOrReplaceTempView` + `spark.sql` / `selectExpr` / `expr`）
+- データ型操作（`when`/`otherwise`・`coalesce`・日付・複雑な型）
 - データソースの読み書き（CSV / JSON / Parquet on Volume）
+- DataFrame in/out 設計と単体テスト、スキーマに基づく動的処理
+- **Delta Lake**（ACID・`DELETE`/`UPDATE`/`MERGE`・タイムトラベル・`OPTIMIZE`）
+- パフォーマンスチューニング（broadcast join・`explain`）・pandas/Arrow 連携・UDF
 
 ## 参考
 
 - [Databricks の PySpark](https://docs.databricks.com/aws/ja/pyspark/)
 - [PySpark の基本](https://docs.databricks.com/aws/ja/pyspark/basics)
 - [PySpark のデータソース](https://docs.databricks.com/aws/ja/pyspark/datasources)
+- [The Data Engineer's Guide to Apache Spark and Delta Lake（Databricks eBook）](https://www.databricks.com/resources/ebook/the-data-engineers-guide-to-apache-spark-and-delta-lake)
+- [PySpark開発時に最低限知っておくべき7つの知識（manabian, Qiita）](https://qiita.com/manabian/items/9117ac98246dd8bb6edf)
+- [Pythonで大量データ処理！PySparkを用いたデータ処理と分析のきほん（Chie Hayashida, SpeakerDeck）](https://speakerdeck.com/chie8842/pythondeda-liang-detachu-li-pysparkwoyong-itadetachu-li-tofen-xi-falsekihon)
