@@ -94,7 +94,7 @@ from pyspark.sql import SparkSession
 # 共通関数の内部などでは、既存のセッションを取得して再利用する
 active = SparkSession.getActiveSession()
 print("Spark version :", active.version)
-print("アプリ名       :", active.sparkContext.appName if active else "N/A")
+print("セッション取得 :", "OK" if active is not None else "None")
 
 # 実行時設定は spark.conf で管理（取得の例）
 print("shuffle partitions:", spark.conf.get("spark.sql.shuffle.partitions"))
@@ -505,8 +505,12 @@ display(seg_summary)
 
 # COMMAND ----------
 
-# Arrow を有効化（変換高速化）
-spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
+# Arrow を有効化（変換高速化）。Serverless では既定で有効なため設定不可のことがある
+try:
+    spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
+    print("Arrow 有効化:", spark.conf.get("spark.sql.execution.arrow.pyspark.enabled"))
+except Exception as e:
+    print("Arrow 設定はスキップ（Serverless では既定で有効）:", type(e).__name__)
 
 # 小さく集計してから pandas へ
 pdf = (df_customer.groupBy("c_mktsegment")
