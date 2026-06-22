@@ -391,8 +391,11 @@ print("残高トップ5の顧客名:", top_names)
 # COMMAND ----------
 
 def cast_int_col_as_int(df):
-    """int_col を integer 型にキャストして返す（DataFrame in / DataFrame out）。"""
-    return df.withColumn("int_col", df.int_col.cast("int"))
+    """int_col を integer 型にキャストして返す（DataFrame in / DataFrame out）。
+    "12.3" のような小数文字列も許容するため double 経由で int に丸める
+    （Databricks は既定で ANSI モードのため、文字列→int の直接キャストはエラーになる）。
+    """
+    return df.withColumn("int_col", df.int_col.cast("double").cast("int"))
 
 
 # --- 単体テスト（ノートブック内で assert 実行）---
