@@ -478,8 +478,10 @@ display(spark.sql(dynamic_sql))
 # MAGIC - **DataFrame / 組み込み関数を優先**（JVM 実行で高速。RDD / Python UDF は Python プロセスで遅い）
 # MAGIC - **処理するデータ量を減らす**（早めに `filter` / `select`）
 # MAGIC - **小さいテーブルは broadcast join** でシャッフルを避ける
-# MAGIC - **再利用する DataFrame は cache**、**パーティション数は repartition / coalesce** で調整
+# MAGIC - **パーティション数は repartition / coalesce** で調整
 # MAGIC - **保存フォーマットは Parquet/Delta（列指向）**、データの偏り（Skew）に注意
+# MAGIC - 汎用クラスターでは **再利用する DataFrame を `cache()`** で保持できます
+# MAGIC   （Serverless ではキャッシュ管理が自動のため明示的な `cache()` は非対応）
 
 # COMMAND ----------
 
@@ -493,10 +495,9 @@ df_bcast = df_order.join(broadcast(df_customer), df_order.o_custkey == df_custom
 print("broadcast join の計画（BroadcastHashJoin になる）:")
 df_bcast.explain(mode="simple")
 
-# 再利用する集計はキャッシュして再計算を避ける
-seg_summary = df_joined.groupBy("c_mktsegment").agg(_sum("o_totalprice").alias("revenue")).cache()
-print("キャッシュした集計件数:", seg_summary.count())  # 1回目で実体化
-print("2回目はキャッシュから高速に返る:", seg_summary.count())
+# 集計（汎用クラスターでは末尾に .cache() を付けると再計算を防げる）
+seg_summary = df_joined.groupBy("c_mktsegment").agg(_sum("o_totalprice").alias("revenue"))
+print("集計件数:", seg_summary.count())
 display(seg_summary)
 
 # COMMAND ----------

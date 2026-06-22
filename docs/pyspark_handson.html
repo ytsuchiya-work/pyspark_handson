@@ -321,7 +321,7 @@ spark.sql(f"SELECT\n  {select_clause}\nFROM my_table LIMIT 3")</code></pre>
     <tr><td>DataFrame / 組み込み関数を優先</td><td>JVM 実行で高速。RDD・Python UDF は Python プロセスで遅い</td></tr>
     <tr><td>データ量を早く減らす</td><td>パイプラインの早い段階で <code>filter</code> / <code>select</code>。結合は小さいデータ同士を先に</td></tr>
     <tr><td>broadcast join</td><td>小さいテーブルを <code>broadcast()</code> してシャッフルを回避</td></tr>
-    <tr><td>cache / persist</td><td>繰り返し使う DataFrame をメモリに保持して再計算を防ぐ</td></tr>
+    <tr><td>cache / persist</td><td>繰り返し使う DataFrame をメモリに保持して再計算を防ぐ（汎用クラスター向け。Serverless はキャッシュ自動管理のため明示 cache は非対応）</td></tr>
     <tr><td>パーティション調整</td><td><code>repartition</code> / <code>coalesce</code> で並列度を最適化</td></tr>
     <tr><td>列指向フォーマット</td><td>Parquet / Delta で高速読み込み・列プルーニング</td></tr>
     <tr><td>Skew（偏り）に注意</td><td>特定パーティションにデータが集中すると処理待ちが発生</td></tr>
