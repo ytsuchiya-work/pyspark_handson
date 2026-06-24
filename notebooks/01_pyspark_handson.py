@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # MAGIC %md
 # MAGIC # PySpark ハンズオン on Databricks（初級 → 中級）
 # MAGIC
@@ -17,7 +21,7 @@
 # MAGIC - [PySpark開発時に最低限知っておくべき7つの知識（manabian, Qiita）](https://qiita.com/manabian/items/9117ac98246dd8bb6edf)
 # MAGIC - Chie Hayashida「Pythonで大量データ処理！PySparkを用いたデータ処理と分析のきほん」(PyCon JP 2017)
 # MAGIC
-# MAGIC **実行環境**: Serverless もしくは Databricks Runtime 15.4 LTS 以降の汎用クラスター
+# MAGIC **実行環境**: Serverless（推奨） もしくは Databricks Runtime 15.4 LTS 以降の汎用クラスター
 
 # COMMAND ----------
 
@@ -27,7 +31,7 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("catalog", "classic_stable_ytcy_catalog", "出力先カタログ")
+dbutils.widgets.text("catalog", "ytcy_azure_east2classic_stable", "出力先カタログ")
 dbutils.widgets.text("schema", "pyspark_handson", "出力先スキーマ")
 dbutils.widgets.text("num_customers", "10000", "生成する顧客数")
 dbutils.widgets.text("num_orders", "50000", "生成する注文数")
@@ -110,6 +114,7 @@ print("shuffle partitions:", spark.conf.get("spark.sql.shuffle.partitions"))
 
 # ここまでは "定義" のみ。データはまだ動いていない（遅延評価）
 from pyspark.sql import functions as F
+
 lazy_df = (
     spark.range(1, 1000)
     .withColumnRenamed("id", "n")
@@ -178,10 +183,13 @@ display(df_children)
 
 print("=== printSchema ===")
 df_dict.printSchema()
+
 print("=== columns ===", df_dict.columns)
 print("=== dtypes ===", df_dict.dtypes)
+
 print("=== DDL 文字列 (simpleString) ===")
 print(df_dict.schema.simpleString())
+
 print("=== JSON 形式のフィールド情報 ===")
 print(df_dict.schema.jsonValue()["fields"])
 
@@ -302,6 +310,7 @@ display(df_order.withColumn("days_since", datediff(current_date(), col("o_orderd
 # 複雑な型：struct でネスト、collect_list で配列化 → explode で展開
 df_struct = df_customer.withColumn("profile", struct("c_mktsegment", "c_nation"))
 display(df_struct.select("c_custkey", "profile").limit(5))
+
 df_arr = df_customer.groupBy("c_mktsegment").agg(collect_list("c_custkey").alias("custkeys"))
 display(df_arr.withColumn("one_key", explode("custkeys")).limit(5))
 
@@ -395,7 +404,7 @@ display(df_customer.withColumn("balance_band",
         ).select("c_custkey", "c_acctbal", "balance_band").limit(5))
 
 # スタイル4: filter / where に SQL 文字列、alias で別名
-display(df_customer.alias("c").filter("c.c_acctbal > 9000").select("c.c_custkey", "c.c_acctbal").limit(5))
+display(df_customer.alias("c").filter("c.c_acctbal > 1000").select("c.c_custkey", "c.c_acctbal").limit(5))
 
 # COMMAND ----------
 
@@ -630,6 +639,7 @@ display(df_back)
 
 # COMMAND ----------
 
+import time
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StringType
 
@@ -644,13 +654,39 @@ def balance_rank(bal):
         return "silver"
     return "negative"
 
-display(df_customer.withColumn("rank", balance_rank("c_acctbal"))
-        .select("c_custkey", "c_acctbal", "rank").limit(10))
+# --- データ量を増やして差を明確にする（100倍 = 約100万行）---
+df_large = df_customer.crossJoin(spark.range(100).select(F.col("id").alias("_rep")))
+row_count = df_large.count()
+print(f"計測対象の行数: {row_count:,}")
 
-# 同じ処理を組み込み式で（こちらが高速）
-display(df_customer.withColumn("rank",
-        expr("CASE WHEN c_acctbal > 5000 THEN 'gold' WHEN c_acctbal > 0 THEN 'silver' ELSE 'negative' END"))
-        .select("c_custkey", "c_acctbal", "rank").limit(10))
+# --- UDF 版の計測 ---
+df_udf = (df_large.withColumn("rank", balance_rank("c_acctbal"))
+          .select("c_custkey", "c_acctbal", "rank"))
+
+start = time.time()
+df_udf.groupBy("rank").count().collect()  # rank 列の値を使う集計で実行を強制
+udf_elapsed = time.time() - start
+print(f"🐍 Python UDF : {udf_elapsed:.3f} 秒")
+
+# --- 組み込み式（expr/CASE）版の計測 ---
+df_builtin = (df_large.withColumn("rank",
+              expr("CASE WHEN c_acctbal > 5000 THEN 'gold' WHEN c_acctbal > 0 THEN 'silver' ELSE 'negative' END"))
+              .select("c_custkey", "c_acctbal", "rank"))
+
+start = time.time()
+df_builtin.groupBy("rank").count().collect()  # rank 列の値を使う集計で実行を強制
+builtin_elapsed = time.time() - start
+print(f"⚡ 組み込み式  : {builtin_elapsed:.3f} 秒")
+
+# --- 比較サマリー ---
+print(f"\n{'='*50}")
+print(f"  行数       : {row_count:,}")
+print(f"  Python UDF : {udf_elapsed:.3f} 秒")
+print(f"  組み込み式 : {builtin_elapsed:.3f} 秒")
+print(f"  速度比     : 組み込み式は UDF の約 {udf_elapsed / builtin_elapsed:.1f} 倍高速")
+print(f"{'='*50}")
+
+display(df_builtin.limit(10))
 
 # COMMAND ----------
 
