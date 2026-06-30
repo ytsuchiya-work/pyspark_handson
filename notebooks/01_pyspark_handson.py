@@ -31,8 +31,15 @@
 
 # COMMAND ----------
 
+import re
+
+# 複数人が同じスキーマを共有しないよう、ログインユーザーのメールアドレスから
+# スキーマ名を動的に生成する（例: pyspark_handson_yusuke_tsuchiya）
+_user = spark.sql("SELECT current_user()").collect()[0][0]
+_safe_user = re.sub(r"[^a-zA-Z0-9]", "_", _user.split("@")[0])
+
 dbutils.widgets.text("catalog", "ytcy_azure_east2classic_stable", "出力先カタログ")
-dbutils.widgets.text("schema", "pyspark_handson", "出力先スキーマ")
+dbutils.widgets.text("schema", f"pyspark_handson_{_safe_user}", "出力先スキーマ")
 dbutils.widgets.text("num_customers", "10000", "生成する顧客数")
 dbutils.widgets.text("num_orders", "50000", "生成する注文数")
 
