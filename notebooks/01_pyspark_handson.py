@@ -19,7 +19,6 @@
 # MAGIC ## 参考資料
 # MAGIC - [Databricks の PySpark（概要 / 基本 / データソース）](https://docs.databricks.com/aws/ja/pyspark/)
 # MAGIC - [PySpark開発時に最低限知っておくべき7つの知識（manabian, Qiita）](https://qiita.com/manabian/items/9117ac98246dd8bb6edf)
-# MAGIC - Chie Hayashida「Pythonで大量データ処理！PySparkを用いたデータ処理と分析のきほん」(PyCon JP 2017)
 # MAGIC
 # MAGIC **実行環境**: Serverless（推奨） もしくは Databricks Runtime 15.4 LTS 以降の汎用クラスター
 
@@ -31,15 +30,8 @@
 
 # COMMAND ----------
 
-import re
-
-# 複数人が同じスキーマを共有しないよう、ログインユーザーのメールアドレスから
-# スキーマ名を動的に生成する（例: pyspark_handson_yusuke_tsuchiya）
-_user = spark.sql("SELECT current_user()").collect()[0][0]
-_safe_user = re.sub(r"[^a-zA-Z0-9]", "_", _user.split("@")[0])
-
 dbutils.widgets.text("catalog", "ytcy_azure_east2classic_stable", "出力先カタログ")
-dbutils.widgets.text("schema", f"pyspark_handson_{_safe_user}", "出力先スキーマ")
+dbutils.widgets.text("schema", "pyspark_handson", "出力先スキーマ")
 dbutils.widgets.text("num_customers", "10000", "生成する顧客数")
 dbutils.widgets.text("num_orders", "50000", "生成する注文数")
 
@@ -138,6 +130,175 @@ print("件数（アクション count を実行）:", lazy_df.count())
 
 # COMMAND ----------
 
+import time
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+# --- 変換の定義（遅延評価）：計算は走らない ---
+# このセルの実行時間をノートブック UI で確認してください → ほぼゼロのはず
+
+lazy_df = (
+    spark.range(1, 50_000_001)
+    .withColumnRenamed("id", "n")
+    .withColumn("group_a", (F.col("n") % 1000).cast("int"))
+    .withColumn("group_b", (F.col("n") % 50).cast("int"))
+    .withColumn("value", F.sin(F.col("n")) * 1000)
+    .withColumn("noise", F.rand(seed=42) * 100)
+    # ウィンドウ関数（シャッフル発生）
+    .withColumn("rank_in_group",
+                F.row_number().over(Window.partitionBy("group_a").orderBy(F.col("value").desc())))
+    .filter(F.col("rank_in_group") <= 100)
+    # 2段目の集計（さらにシャッフル）
+    .groupBy("group_b")
+    .agg(
+        F.count("*").alias("cnt"),
+        F.sum("value").alias("total_value"),
+        F.avg("noise").alias("avg_noise"),
+        F.stddev("value").alias("stddev_value"),
+        F.percentile_approx("value", 0.5).alias("median_value"),
+    )
+    .sort(F.col("total_value").desc())
+)
+
+print("✅ 変換の定義が完了（5000万行 + Window + GroupBy + Sort）")
+print("   しかし、まだ何も計算されていない（実行計画の構築のみ）")
+print(f"   → このセルの実行時間を確認してください")
+
+# COMMAND ----------
+
+# DBTITLE 1,アクション実行（遅延評価の計測）
+# --- アクション実行：ここで初めて計算が走る ---
+# このセルの実行時間をノートブック UI で確認してください → 数秒かかるはず
+import time
+
+actions = {}
+
+# Action 1: count()
+start = time.time()
+row_count = lazy_df.count()
+actions["count()"] = time.time() - start
+
+# Action 2: collect()
+start = time.time()
+result = lazy_df.collect()
+actions["collect()"] = time.time() - start
+
+# Action 3: show()
+start = time.time()
+lazy_df.show(5)
+actions["show(5)"] = time.time() - start
+
+# --- 結果の比較 ---
+print("\n" + "="*60)
+print("⏱  遅延評価の計測結果")
+print("="*60)
+print(f"  セル11（変換定義）: ほぼゼロ  ← UIの実行時間で確認")
+print(f"  ---")
+for action_name, elapsed in actions.items():
+    print(f"  アクション {action_name:<12}: {elapsed:.4f} 秒  ← 実際に計算が実行される")
+print(f"\n  結果行数: {row_count}")
+print("\n💡 ポイント: セル11（変換定義）は一瞬、セル12（アクション）は数秒。")
+print("   変換はDAGの定義のみ。アクションで初めて Catalyst Optimizer が実行する。")
+
+# COMMAND ----------
+
+# DBTITLE 1,Cache による高速化の検証
+import time
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+# --- セル12 とは別の DataFrame を定義（同等の重い処理） ---
+heavy_df = (
+    spark.range(1, 50_000_001)
+    .withColumnRenamed("id", "n")
+    .withColumn("group_a", (F.col("n") % 1000).cast("int"))
+    .withColumn("group_b", (F.col("n") % 50).cast("int"))
+    .withColumn("value", F.cos(F.col("n")) * 1000)
+    .withColumn("noise", F.rand(seed=99) * 100)
+    .withColumn("rank_in_group",
+                F.row_number().over(Window.partitionBy("group_a").orderBy(F.col("value").desc())))
+    .filter(F.col("rank_in_group") <= 100)
+    .groupBy("group_b")
+    .agg(
+        F.count("*").alias("cnt"),
+        F.sum("value").alias("total_value"),
+        F.avg("noise").alias("avg_noise"),
+        F.stddev("value").alias("stddev_value"),
+    )
+    .sort(F.col("total_value").desc())
+)
+
+# =============================================================
+# ❶ マテリアライズなし: 毎回フルに再計算される
+# =============================================================
+print("=" * 60)
+print("❶ マテリアライズなし: 毎回フルに再計算される")
+print("=" * 60)
+
+start = time.time()
+heavy_df.count()
+no_mat_1st = time.time() - start
+
+start = time.time()
+heavy_df.count()
+no_mat_2nd = time.time() - start
+
+start = time.time()
+heavy_df.show(3)
+no_mat_3rd = time.time() - start
+
+print(f"  1回目 count(): {no_mat_1st:.4f} 秒")
+print(f"  2回目 count(): {no_mat_2nd:.4f} 秒  ← ほぼ同じ（再計算）")
+print(f"  3回目 show() : {no_mat_3rd:.4f} 秒  ← こちらも同等（再計算）")
+
+# =============================================================
+# ❷ マテリアライズあり: 計算結果を保存して再利用
+#   → Serverless では .cache() が使えないため、
+#     結果を pandas に collect して Spark DF を再生成する手法で代替。
+#     (クラスター上では .cache() / .persist() が利用可能)
+# =============================================================
+print("\n" + "=" * 60)
+print("❷ マテリアライズあり: 計算結果を保存して再利用")
+print("=" * 60)
+
+# 1回目: 計算を実行し、結果を pandas DataFrame にマテリアライズ
+start = time.time()
+pdf = heavy_df.toPandas()
+mat_compute = time.time() - start
+
+# pandas から Spark DataFrame を再生成（軽量なデータのみ）
+mat_df = spark.createDataFrame(pdf)
+
+# 2回目: マテリアライズ済み DF からの読み取り
+start = time.time()
+mat_df.count()
+mat_read_1st = time.time() - start
+
+# 3回目: 別のアクションも高速
+start = time.time()
+mat_df.show(3)
+mat_read_2nd = time.time() - start
+
+print(f"  マテリアライズ: {mat_compute:.4f} 秒  ← 計算 + pandas へ収集")
+print(f"  読み取り 1 : {mat_read_1st:.4f} 秒  ← 小さな結果を読むだけ ⚡")
+print(f"  読み取り 2 : {mat_read_2nd:.4f} 秒  ← 小さな結果を読むだけ ⚡")
+
+# --- まとめ ---
+print("\n" + "=" * 60)
+print("📊 比較まとめ")
+print("=" * 60)
+print(f"  マテリアライズなし 2回目 : {no_mat_2nd:.4f} 秒（毎回再計算）")
+print(f"  マテリアライズあり読取  : {mat_read_1st:.4f} 秒（保存済み結果を読み取り）")
+speedup = no_mat_2nd / max(mat_read_1st, 0.0001)
+print(f"  → 高速化倍率 : 約 {speedup:.1f} 倍")
+print("\n💡 ポイント:")
+print("   ・クラスター環境では .cache() / .persist() でメモリ上に保持可能")
+print("   ・Serverless では一時テーブルへの保存 or toPandas() でマテリアライズ")
+print("   ・どちらも「同じ DataFrame に複数回アクションを呼ぶ場合」に有効")
+print("   ・不要になったら解放: .unpersist()（クラスター）/ del df（Serverless）")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## 1.4 DataFrame の作成（4 つの方法）
 # MAGIC 用途に応じて複数の作り方があります。スキーマは `"col1 type, col2 type"` の DDL 文字列で簡潔に指定できます。
@@ -216,14 +377,14 @@ nations = ["JAPAN", "UNITED STATES", "GERMANY", "FRANCE", "INDIA", "BRAZIL"]
 
 df_customer = (
     spark.range(1, num_customers + 1)
-    .withColumnRenamed("id", "c_custkey")
-    .withColumn("c_name", F.concat(F.lit("Customer#"), F.col("c_custkey").cast("string")))
+    .withColumnRenamed("id", "c_custkey")  # 顧客キー列にリネーム
+    .withColumn("c_name", F.concat(F.lit("Customer#"), F.col("c_custkey").cast("string")))  # 顧客名を生成（Customer# + 顧客キー）
     .withColumn("c_mktsegment", F.element_at(F.array(*[F.lit(s) for s in segments]),
-                                             (F.col("c_custkey") % len(segments) + 1).cast("int")))
-    .withColumn("c_nationkey", (F.col("c_custkey") % len(nations)).cast("int"))
+                                             (F.col("c_custkey") % len(segments) + 1).cast("int")))  # 顧客キーに基づきマーケットセグメントを割り当て
+    .withColumn("c_nationkey", (F.col("c_custkey") % len(nations)).cast("int"))  # 顧客キーから国キーを算出
     .withColumn("c_nation", F.element_at(F.array(*[F.lit(n) for n in nations]),
-                                         (F.col("c_custkey") % len(nations) + 1).cast("int")))
-    .withColumn("c_acctbal", F.round(F.rand(seed=42) * 10000 - 1000, 2))
+                                         (F.col("c_custkey") % len(nations) + 1).cast("int")))  # 顧客キーに基づき国名を割り当て
+    .withColumn("c_acctbal", F.round(F.rand(seed=42) * 10000 - 1000, 2))  # 口座残高を乱数で生成（-1000〜9000の範囲）
 )
 display(df_customer)
 
@@ -280,7 +441,7 @@ df_flag = df_customer.withColumn("balance_flag", col("c_acctbal") > 1000)
 display(df_flag.select("c_custkey", "c_acctbal", "balance_flag"))
 
 # 行のフィルタ（複数条件は括弧 + & / |）
-display(df_customer.filter((col("c_mktsegment") == "BUILDING") & (col("c_acctbal") > 5000)))
+display(df_customer.filter((col("c_mktsegment") == "BUILDING") & (col("c_acctbal") > 7000)))
 
 # 重複削除・ソート・上位 N 件
 display(df_customer.select("c_mktsegment").distinct())
